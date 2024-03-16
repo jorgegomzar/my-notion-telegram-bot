@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "my-notion-telegram-bot"
+version = "0.1.0"
+description = "TelegramBot to automate tasks in Notion"
+authors = ["jorgegomez <jorgegomez@bmat.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+notion-client = "^2.2.1"
+pydantic = "^2.6.4"
+pydantic-settings = "^2.2.1"
+python-telegram-bot = "^21.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.1.1"
+pytest-mock = "^3.12.0"
+ruff = "^0.3.3"
+pyright = "^1.1.354"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
