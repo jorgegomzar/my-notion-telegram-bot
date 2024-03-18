@@ -1,16 +1,44 @@
+import enum
+from logging import getLogger
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, ContextTypes, CommandHandler
+from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, ContextTypes, CommandHandler, ConversationHandler
 
 from my_notion_telegram_bot.notion import NotionClient
 
 
-MEDIA_ROW_OPTS = {
-    "Anime": {
-        "Animeid",
-        "Animeflv",
-        "Jkanime"
-    },
-}
+class ConversationFlags(str, enum.Enum):
+    START_OVER = enum.auto()
+
+
+class AddMediaRowStates(enum.Enum):
+    STOPPING = enum.auto()
+    SELECTING_MEDIA_TYPE = enum.auto()
+    SELECTING_ANIME_SOURCE = enum.auto()
+    WAITING_FOR_ANIME_URL = enum.auto()
+
+
+class AddMediaRowCallbacks(str, enum.Enum):
+    STOP = enum.auto()
+    ADD_ANIME = enum.auto()
+    ADD_MANGA = enum.auto()
+    ADD_SERIE = enum.auto()
+    ADD_FILM = enum.auto()
+
+
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """End Conversation by command."""
+    text = "Okay, bye!"
+
+    await update.callback_query.answer()
+    getLogger("STOP").info("STOP")
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=text
+    )
+
+    return ConversationHandler.END
 
 
 async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -20,55 +48,101 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def add_media_row(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # TODO: replace with conversation handler --> https://docs.python-telegram-bot.org/en/stable/telegram.ext.conversationhandler.html#conversationhandler
-    await update.message.reply_text(
-        "Please choose:",
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(btn, callback_data=btn)
-                for btn in MEDIA_ROW_OPTS.keys()
-            ],
-        ])
+async def add_media_row(update: Update, context: ContextTypes.DEFAULT_TYPE) -> AddMediaRowStates:
+    """Entrypoint for adding rows to Media DB in Notion."""
+    text = (
+        "Let's add rows to the media DB in Notion!\n\n"
+        "What media type do you want to add?"
     )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(text="Anime", callback_data=AddMediaRowCallbacks.ADD_ANIME.value),
+            InlineKeyboardButton(text="Manga", callback_data=AddMediaRowCallbacks.ADD_MANGA.value),
+        ],
+        [
+            InlineKeyboardButton(text="Serie", callback_data=AddMediaRowCallbacks.ADD_SERIE.value),
+            InlineKeyboardButton(text="Film", callback_data=AddMediaRowCallbacks.ADD_FILM.value),
+        ],
+        [
+            InlineKeyboardButton(text="Cancel", callback_data=AddMediaRowCallbacks.STOP.value),
+        ],
+    ])
+
+    # If we're starting over we don't need to send a new message
+    if context.user_data.get(ConversationFlags.START_OVER):
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text=text, reply_markup=keyboard)
+    else:
+        await update.message.reply_text(text=text, reply_markup=keyboard)
+
+    context.user_data[ConversationFlags.START_OVER] = False
+    return AddMediaRowStates.SELECTING_MEDIA_TYPE
 
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-
-    new_opts = MEDIA_ROW_OPTS.get(query.data)
-
-    if new_opts:
-        await query.edit_message_reply_markup(
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(btn, callback_data=btn)
-                    for btn in new_opts
-                ],
-            ])
-        )
-        return
+async def add_media_row_anime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> AddMediaRowStates:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(text="Please, paste the URL now...")
     
-    await query.edit_message_text(text="What is the anime title?")
+    return AddMediaRowStates.WAITING_FOR_ANIME_URL
 
 
-async def test(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    notion_client = context.bot_data["notion_client"]
-    rows = await notion_client.get_media_rows()
+async def add_media_row_manga(update: Update, context: ContextTypes.DEFAULT_TYPE) -> AddMediaRowStates:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(text="You selected Manga")
 
-    for row in rows:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=str(row["properties"]["anime"]["title"][0]["text"]["content"]),
-        )
+    return ConversationHandler.END
 
+
+async def add_media_row_serie(update: Update, context: ContextTypes.DEFAULT_TYPE) -> AddMediaRowStates:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(text="You selected Serie")
+
+    return ConversationHandler.END
+
+async def add_media_row_film(update: Update, context: ContextTypes.DEFAULT_TYPE) -> AddMediaRowStates:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(text="You selected Film")
+
+    return ConversationHandler.END
+
+async def add_media_row_anime_from_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> AddMediaRowStates:
+    anime_url = AddMediaRowCallbacks(update.effective_chat.message)
+
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(text=(
+        f"You selected {anime_source.name}\n\n"
+        "Please paste the URL now."
+    ))
+
+    return ConversationHandler.END
 
 command_handlers = [
     CommandHandler('get_chat_id', get_chat_id),
-    CommandHandler('add_media_row', add_media_row),
-    CallbackQueryHandler(button),
-    CommandHandler('test', test),
+    ConversationHandler(
+        entry_points=[CommandHandler("add_media_row", add_media_row)],
+        states={
+            AddMediaRowStates.SELECTING_MEDIA_TYPE: [
+                CallbackQueryHandler(
+                    add_media_row_anime,
+                    pattern=f"^{AddMediaRowCallbacks.ADD_ANIME.value}$",
+                ),
+                CallbackQueryHandler(
+                    add_media_row_manga,
+                    pattern=f"^{AddMediaRowCallbacks.ADD_MANGA.value}$",
+                ),
+                CallbackQueryHandler(
+                    add_media_row_serie,
+                    pattern=f"^{AddMediaRowCallbacks.ADD_SERIE.value}$",
+                ),
+                CallbackQueryHandler(
+                    add_media_row_film,
+                    pattern=f"^{AddMediaRowCallbacks.ADD_FILM.value}$",
+                ),
+            ],
+            AddMediaRowStates.WAITING_FOR_ANIME_URL: [CallbackQueryHandler(add_media_row_anime_from_url)],
+        },
+        fallbacks=[CommandHandler("stop", stop)]
+    ),
 ]
 
 
